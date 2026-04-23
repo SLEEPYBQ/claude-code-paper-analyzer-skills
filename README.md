@@ -1,6 +1,6 @@
 # Claude Code Paper Analyzer Skills
 
-[Claude Code](https://docs.anthropic.com/en/docs/claude-code) skills for downloading and analyzing academic papers, generating comprehensive Obsidian notes with extracted figures — all powered by Claude.
+[Claude Code](https://docs.anthropic.com/en/docs/claude-code) skills for downloading and analyzing academic papers, generating comprehensive Obsidian notes with extracted figures -- all powered by Claude.
 
 > Built on top of [evil-read-arxiv](https://github.com/juliye2025/evil-read-arxiv), extending its paper analysis workflow from arXiv to ACM Digital Library and local PDFs. Uses the same Obsidian vault structure and note format for seamless integration.
 
@@ -76,7 +76,7 @@ After copying, the skills will appear when you type `/` in Claude Code.
 
 The skills need to know where your Obsidian vault is. Set the `OBSIDIAN_VAULT_PATH` environment variable:
 
-**macOS/Linux** — add to your shell config (`~/.zshrc`, `~/.bashrc`, etc.):
+**macOS/Linux** -- add to your shell config (`~/.zshrc`, `~/.bashrc`, etc.):
 ```bash
 export OBSIDIAN_VAULT_PATH="/Users/yourname/Documents/my-obsidian-vault"
 ```
@@ -97,7 +97,7 @@ Your Vault/
 └── 20_Research/
     └── Papers/           # Paper notes will be organized here by domain
         ├── HCI_AI/       # (auto-created by the skill)
-        ├── 大模型/        # (auto-created by the skill)
+        ├── LLM/          # (auto-created by the skill)
         └── ...
 ```
 
@@ -136,11 +136,11 @@ The `acm-paper-analyze` skill uses Selenium to bypass ACM's Cloudflare protectio
 - **Windows**: [Download Chrome](https://www.google.com/chrome/)
 - **Linux**: `sudo apt install google-chrome-stable` or [download](https://www.google.com/chrome/)
 
-ChromeDriver is managed automatically by Selenium 4+ — no separate installation needed.
+ChromeDriver is managed automatically by Selenium 4+ -- no separate installation needed.
 
 ## Usage
 
-### `/acm-paper-analyze` — Download and analyze ACM papers
+### `/acm-paper-analyze` -- Download and analyze ACM papers
 
 **By DOI:**
 ```
@@ -159,7 +159,7 @@ ChromeDriver is managed automatically by Selenium 4+ — no separate installatio
 
 > **Note**: When ACM's Cloudflare blocks the download, the skill automatically falls back to downloading from ArXiv (if the paper has an ArXiv version). If both fail, it will suggest you download the PDF manually and use `/pdf-paper-analyze` instead.
 
-### `/pdf-paper-analyze` — Analyze local PDFs
+### `/pdf-paper-analyze` -- Analyze local PDFs
 
 **Single PDF:**
 ```
@@ -184,7 +184,7 @@ Each paper gets its own directory with an analysis note and extracted figures:
 $OBSIDIAN_VAULT_PATH/20_Research/Papers/
 └── HCI_AI/                              # Auto-inferred domain
     └── Paper_Title/
-        ├── Paper Title.md               # Full analysis note (Chinese)
+        ├── Paper Title.md               # Full analysis note (in Chinese)
         └── images/
             ├── page3.png                # Pages with Figure 1, Table 1, etc.
             ├── page7.png
@@ -200,20 +200,20 @@ paper_id: "10.1145/..."
 title: "Paper Title"
 authors: "Author1, Author2"
 domain: "HCI_AI"
-tags: [论文笔记, CHI-2026, Human-AI-Collaboration]
+tags: [paper-note, CHI-2026, Human-AI-Collaboration]
 quality_score: "8.5/10"
 status: analyzed
 ---
 
 # Paper Title
 
-## 核心信息          ← metadata table
-## 摘要翻译          ← Chinese abstract + key takeaways
-## 研究背景与动机     ← background & motivation
-## 方法概述          ← methods with embedded figures
-## 实验结果          ← results with data tables
-## 深度分析          ← strengths, limitations, implications
-## 综合评价          ← 5-dimension scoring rubric
+## Core Info            <- metadata table
+## Abstract Translation <- Chinese abstract + key takeaways
+## Background           <- background & motivation
+## Methods              <- methods with embedded figures
+## Results              <- results with data tables
+## Analysis             <- strengths, limitations, implications
+## Evaluation           <- 5-dimension scoring rubric
 ```
 
 ### Domain Auto-Inference
@@ -222,10 +222,10 @@ If no domain is specified, the skill infers it from paper content keywords:
 
 | Keywords in Paper | Inferred Domain |
 |-------------------|----------------|
-| agent, multi-agent, orchestration | 智能体 |
-| vision, visual, image, multimodal | 多模态技术 |
-| reinforcement learning, RL, reward | 强化学习_LLM_Agent |
-| language model, LLM, transformer | 大模型 |
+| agent, multi-agent, orchestration | Agent |
+| vision, visual, image, multimodal | Multimodal |
+| reinforcement learning, RL, reward | RL_LLM_Agent |
+| language model, LLM, transformer | LLM |
 | HCI, user study, interface, CHI | HCI_AI |
 | diffusion, generation, synthesis | Diffusion |
 | memory, personalization | AgentMemory |
@@ -236,22 +236,22 @@ Existing subdirectories in your vault are preferred when matching.
 
 ```
 Input (DOI / title / PDF path)
-    │
-    ├─ [acm-paper-analyze only]
-    │   ├── Title → Semantic Scholar API → DOI
-    │   └── DOI → Selenium + Chrome → Download PDF
-    │   └── (fallback) → ArXiv PDF if ACM blocked
-    │
-    ▼
-markitdown (Microsoft): PDF → Markdown text
-    │
-    ▼
+    |
+    +-- [acm-paper-analyze only]
+    |   +-- Title -> Semantic Scholar API -> DOI
+    |   +-- DOI -> Selenium + Chrome -> Download PDF
+    |   +-- (fallback) -> ArXiv PDF if ACM blocked
+    |
+    v
+markitdown (Microsoft): PDF -> Markdown text
+    |
+    v
 PyMuPDF: Render pages containing figures/tables as high-res PNG
-    │
-    ▼
+    |
+    v
 Claude Code: Deep analysis of full paper content
-    │
-    ▼
+    |
+    v
 Obsidian note with embedded figures + scoring
 ```
 
