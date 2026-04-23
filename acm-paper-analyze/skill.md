@@ -60,16 +60,16 @@ def parse_input(user_input):
 
 If input is a title, use WebFetch to query:
 ```
-https://api.semanticscholar.org/graph/v1/paper/search?query=ENCODED_TITLE&limit=3&fields=externalIds,title
+https://api.semanticscholar.org/graph/v1/paper/search?query=ENCODED_TITLE&limit=3&fields=externalIds,title,authors,venue
 ```
 
-Extract the DOI from the first matching result's `externalIds.DOI` field.
+Extract the DOI from the first matching result's `externalIds.DOI` field. Also save the `ArXiv` ID from `externalIds.ArXiv` if present — it serves as a fallback download source.
 
 If Semantic Scholar returns no DOI, inform the user and ask them to provide the DOI directly.
 
-## Step 2: Download PDF via Selenium
+## Step 2: Download PDF via Selenium (with ArXiv Fallback)
 
-ACM uses Cloudflare protection that blocks requests/cloudscraper. Use Selenium with a real Chrome browser:
+ACM uses Cloudflare protection that blocks requests/cloudscraper. Use Selenium with a real Chrome browser. If ACM download is blocked by Cloudflare, automatically fall back to the ArXiv version if an ArXiv ID was found in Step 1.
 
 ```python
 import os, time
@@ -121,6 +121,26 @@ def download_pdf(doi, download_dir):
 ```
 
 **Important**: The browser window will open visibly (non-headless) because headless mode is also blocked by Cloudflare.
+
+### ArXiv Fallback
+
+If ACM download fails (Cloudflare keeps blocking), and an ArXiv ID was found in Step 1, fall back to the ArXiv PDF:
+
+```python
+def download_arxiv_fallback(arxiv_id, download_dir):
+    """Download from ArXiv as fallback when ACM is blocked."""
+    import urllib.request
+    os.makedirs(download_dir, exist_ok=True)
+    arxiv_url = f"https://arxiv.org/pdf/{arxiv_id}"
+    pdf_path = os.path.join(download_dir, f"{arxiv_id.replace('/', '_')}.pdf")
+    urllib.request.urlretrieve(arxiv_url, pdf_path)
+    return pdf_path if os.path.exists(pdf_path) else None
+```
+
+**Download priority**:
+1. Try ACM via Selenium first
+2. If blocked after 30 seconds → try ArXiv if ArXiv ID available
+3. If both fail → inform user and suggest manual download + `/pdf-paper-analyze`
 
 ## Step 3: Extract Text with MarkItDown
 
