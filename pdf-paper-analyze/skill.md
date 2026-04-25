@@ -89,41 +89,100 @@ for page in doc:
 doc.close()
 ```
 
-## Step 3: Extract Figure Pages with PyMuPDF
+## Step 3: Extract Figures with PyMuPDF (Cropped)
+
+Extract individual figures by cropping to the figure region instead of rendering entire pages. This produces cleaner images focused on the actual figure content.
 
 ```python
 import fitz
+import re
 
 def extract_figures(pdf_path, images_dir):
-    """Render pages containing figures/tables as high-res PNG images."""
+    """Extract cropped figures and tables from PDF pages."""
     os.makedirs(images_dir, exist_ok=True)
     doc = fitz.open(pdf_path)
     extracted = []
+    fig_counter = 0
 
     for page_num in range(len(doc)):
         page = doc[page_num]
-        text = page.get_text()
-        drawings = page.get_drawings()
+        text_dict = page.get_text('dict')
+        blocks = text_dict['blocks']
 
-        has_figure = any(
-            f'Figure {i}:' in text or f'Figure {i}.' in text
-            for i in range(1, 30)
-        )
-        has_table = any(
-            f'Table {i}:' in text or f'Table {i}.' in text
-            for i in range(1, 20)
-        )
+        # Find all Figure/Table captions on this page
+        captions = []
+        for b in blocks:
+            if 'lines' not in b:
+                continue
+            for line in b['lines']:
+                line_text = ''.join(span['text'] for span in line['spans'])
+                fig_match = re.match(r'(Figure|Fig\.?|Table)\s*(\d+)', line_text)
+                if fig_match:
+                    captions.append({
+                        'type': 'table' if 'Table' in fig_match.group(1) else 'figure',
+                        'num': fig_match.group(2),
+                        'caption_bbox': b['bbox'],  # (x0, y0, x1, y1)
+                    })
 
-        if has_figure or has_table or len(drawings) > 50:
-            mat = fitz.Matrix(2.5, 2.5)  # High resolution
-            pix = page.get_pixmap(matrix=mat)
-            img_name = f'page{page_num + 1}.png'
+        if not captions:
+            # Fallback: if page has many drawings but no detected caption, render full page
+            drawings = page.get_drawings()
+            if len(drawings) > 50:
+                mat = fitz.Matrix(2.5, 2.5)
+                pix = page.get_pixmap(matrix=mat)
+                img_name = f'page{page_num + 1}.png'
+                pix.save(os.path.join(images_dir, img_name))
+                extracted.append(img_name)
+            continue
+
+        # For each caption, estimate figure region and crop
+        for cap in captions:
+            caption_top = cap['caption_bbox'][1]
+            caption_bottom = cap['caption_bbox'][3]
+
+            # Find figure top: scan text blocks above caption,
+            # the figure starts after the last text paragraph above it
+            fig_top = max(0, page.rect.y0)
+            for b in blocks:
+                if 'lines' not in b:
+                    continue
+                block_bottom = b['bbox'][3]
+                if block_bottom < caption_top - 5:
+                    block_text = ''.join(
+                        span['text'] for line in b['lines'] for span in line['spans']
+                    )
+                    # Regular text paragraphs (not part of the figure)
+                    if len(block_text) > 80 and not re.match(r'(Figure|Fig|Table)', block_text):
+                        fig_top = max(fig_top, block_bottom)
+
+            # Crop with small margin
+            margin = 5
+            clip = fitz.Rect(
+                page.rect.x0 + margin,
+                fig_top,
+                page.rect.x1 - margin,
+                caption_bottom + margin
+            )
+
+            mat = fitz.Matrix(3, 3)  # High resolution
+            pix = page.get_pixmap(matrix=mat, clip=clip)
+
+            # Skip tiny crops (likely false positives)
+            if pix.height < 50 or pix.width < 100:
+                continue
+
+            prefix = 'fig' if cap['type'] == 'figure' else 'table'
+            img_name = f'{prefix}{cap["num"]}_page{page_num + 1}.png'
             pix.save(os.path.join(images_dir, img_name))
             extracted.append(img_name)
 
     doc.close()
     return extracted
 ```
+
+**Image naming**: `fig2_page3.png` (Figure 2 from page 3), `table1_page8.png` (Table 1 from page 8).
+
+**Fallback**: If no captions are detected but the page has many vector drawings (>50), the full page is rendered as before.
 
 ## Step 4: Infer Domain
 
@@ -232,7 +291,7 @@ status: analyzed
 - Use `status: analyzed` (no quotes needed for single words)
 
 ### Figure Embedding Rules
-- Use relative path syntax: `![description|800](images/pageX.png)`
+- Use relative path syntax: `![description|800](images/figN_pageX.png)` or `![description|800](images/tableN_pageX.png)`
 - Place figure references near the relevant analysis section
 - Add a `> Figure N: description` caption below each figure
 
