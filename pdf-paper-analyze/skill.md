@@ -28,10 +28,11 @@ Before using this skill, ensure the following are set up:
 
 ```python
 import os
+import shlex
 
 def parse_input(user_input):
     """Determine if input is a single PDF or a directory."""
-    parts = user_input.strip().split()
+    parts = shlex.split(user_input.strip())
     path = parts[0]
     domain_override = None
 
@@ -89,100 +90,28 @@ for page in doc:
 doc.close()
 ```
 
-## Step 3: Extract Figures with PyMuPDF (Cropped)
+## Step 3: Extract Figures with PyMuPDF (Validated Crops)
 
-Extract individual figures by cropping to the figure region instead of rendering entire pages. This produces cleaner images focused on the actual figure content.
+Use the bundled script instead of writing a new caption-only cropper:
 
-```python
-import fitz
-import re
-
-def extract_figures(pdf_path, images_dir):
-    """Extract cropped figures and tables from PDF pages."""
-    os.makedirs(images_dir, exist_ok=True)
-    doc = fitz.open(pdf_path)
-    extracted = []
-    fig_counter = 0
-
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        text_dict = page.get_text('dict')
-        blocks = text_dict['blocks']
-
-        # Find all Figure/Table captions on this page
-        captions = []
-        for b in blocks:
-            if 'lines' not in b:
-                continue
-            for line in b['lines']:
-                line_text = ''.join(span['text'] for span in line['spans'])
-                fig_match = re.match(r'(Figure|Fig\.?|Table)\s*(\d+)', line_text)
-                if fig_match:
-                    captions.append({
-                        'type': 'table' if 'Table' in fig_match.group(1) else 'figure',
-                        'num': fig_match.group(2),
-                        'caption_bbox': b['bbox'],  # (x0, y0, x1, y1)
-                    })
-
-        if not captions:
-            # Fallback: if page has many drawings but no detected caption, render full page
-            drawings = page.get_drawings()
-            if len(drawings) > 50:
-                mat = fitz.Matrix(2.5, 2.5)
-                pix = page.get_pixmap(matrix=mat)
-                img_name = f'page{page_num + 1}.png'
-                pix.save(os.path.join(images_dir, img_name))
-                extracted.append(img_name)
-            continue
-
-        # For each caption, estimate figure region and crop
-        for cap in captions:
-            caption_top = cap['caption_bbox'][1]
-            caption_bottom = cap['caption_bbox'][3]
-
-            # Find figure top: scan text blocks above caption,
-            # the figure starts after the last text paragraph above it
-            fig_top = max(0, page.rect.y0)
-            for b in blocks:
-                if 'lines' not in b:
-                    continue
-                block_bottom = b['bbox'][3]
-                if block_bottom < caption_top - 5:
-                    block_text = ''.join(
-                        span['text'] for line in b['lines'] for span in line['spans']
-                    )
-                    # Regular text paragraphs (not part of the figure)
-                    if len(block_text) > 80 and not re.match(r'(Figure|Fig|Table)', block_text):
-                        fig_top = max(fig_top, block_bottom)
-
-            # Crop with small margin
-            margin = 5
-            clip = fitz.Rect(
-                page.rect.x0 + margin,
-                fig_top,
-                page.rect.x1 - margin,
-                caption_bottom + margin
-            )
-
-            mat = fitz.Matrix(3, 3)  # High resolution
-            pix = page.get_pixmap(matrix=mat, clip=clip)
-
-            # Skip tiny crops (likely false positives)
-            if pix.height < 50 or pix.width < 100:
-                continue
-
-            prefix = 'fig' if cap['type'] == 'figure' else 'table'
-            img_name = f'{prefix}{cap["num"]}_page{page_num + 1}.png'
-            pix.save(os.path.join(images_dir, img_name))
-            extracted.append(img_name)
-
-    doc.close()
-    return extracted
+```bash
+python3 /path/to/pdf-paper-analyze/scripts/extract_figures.py "$PDF_PATH" "$IMAGES_DIR" --json
 ```
 
-**Image naming**: `fig2_page3.png` (Figure 2 from page 3), `table1_page8.png` (Table 1 from page 8).
+If running from inside the skill directory:
 
-**Fallback**: If no captions are detected but the page has many vector drawings (>50), the full page is rendered as before.
+```bash
+python3 scripts/extract_figures.py "$PDF_PATH" "$IMAGES_DIR" --json
+```
+
+The script uses PyMuPDF to detect real visual regions from embedded images and vector drawings. It only writes a crop when visual content is adjacent to the Figure/Table caption and skips mostly white renders. This avoids the common ACM/CHI failure mode where the caption is at the bottom of one page but the actual figure is on the next page.
+
+**Image naming**: `fig2_page3.png` (Figure 2 from page 3), `table1_page8.png` (Table 1 from page 8). Full-page fallbacks use `page3.png` only when no caption is detected but the page has substantial visual content.
+
+**Do not use a caption-only algorithm.** Before writing an image, the extraction must pass all of these checks:
+- there is a real visual bbox above or below the caption;
+- the crop is not tiny;
+- the rendered crop is not more than 95% white pixels.
 
 ## Step 4: Infer Domain
 
@@ -222,7 +151,7 @@ tags:
   - [Domain-Tag]
   - [Topic-Tag-1]
   - [Topic-Tag-2]
-quality_score: "[X.X]/10"
+quality_score: "X.X/10"
 created: "YYYY-MM-DD"
 updated: "YYYY-MM-DD"
 status: analyzed
@@ -257,7 +186,7 @@ status: analyzed
 [Core idea explained in Chinese]
 
 ### 方法框架
-[With embedded figures: ![description|800](images/pageX.png)]
+[With embedded figures: ![description|800](images/figN_pageX.png)]
 
 ## 实验结果
 [Key results with tables and figure references]
@@ -268,7 +197,7 @@ status: analyzed
 
 ## 我的综合评价
 ### 价值评分
-**[X.X]/10**
+**X.X/10**
 
 | 评分维度 | 分数 | 评分理由 |
 |----------|------|----------|
@@ -293,9 +222,42 @@ status: analyzed
 ### Figure Embedding Rules
 - Use relative path syntax: `![description|800](images/figN_pageX.png)` or `![description|800](images/tableN_pageX.png)`
 - Place figure references near the relevant analysis section
-- Add a `> Figure N: description` caption below each figure
+- Add a blank line after the image line, then a `> Figure N: description` or `> Table N: description` caption
 
-## Step 6: Output Summary
+Correct:
+
+```markdown
+![System overview|800](images/fig1_page3.png)
+
+> Figure 1: System overview
+```
+
+Incorrect:
+
+```markdown
+![System overview|800](images/fig1_page3.png)
+> Figure 1: System overview
+```
+
+## Step 6: Validate and Repair the Note
+
+After writing the note, run the bundled validator:
+
+```bash
+python3 /path/to/pdf-paper-analyze/scripts/validate_note.py "$NOTE_PATH" --fix
+python3 /path/to/pdf-paper-analyze/scripts/validate_note.py "$NOTE_PATH"
+```
+
+The validator checks for:
+- broken `images/*.png` references;
+- referenced images that are mostly white;
+- missing blank lines between image embeds and blockquote captions;
+- missing `Figure`/`Table` captions after image embeds;
+- unquoted YAML string values for common metadata fields;
+- `quality_score` format;
+- tag names with spaces.
+
+## Step 7: Output Summary
 
 After creating the note, display:
 
@@ -325,7 +287,7 @@ If processing a directory, show a summary table at the end:
 # Important Rules
 
 - **All analysis content in Chinese** — translations, explanations, evaluations
-- **Extract ALL figures** — architecture diagrams, result plots, tables
+- **Extract all reliable figures** — architecture diagrams, result plots, tables, while skipping blank/mostly white crops
 - **Embed figures in context** — place them near relevant analysis sections
 - **Preserve existing notes** — if a note already exists, do not overwrite without asking
 - **Handle errors gracefully** — if one PDF fails, continue with the next
@@ -347,6 +309,6 @@ If processing a directory, show a summary table at the end:
 
 - **markitdown not installed**: Fall back to PyMuPDF text extraction
 - **PDF corrupted or unreadable**: Skip and report error, continue with next
-- **No figures detected**: Note this in the analysis, proceed without figures
+- **No reliable figures detected**: Note this in the analysis, proceed without figures
 - **Vault path not set**: Error with clear instructions to set `OBSIDIAN_VAULT_PATH`
 - **Domain inference ambiguous**: Default to "其他" and note in the output

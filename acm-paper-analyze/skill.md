@@ -154,88 +154,28 @@ full_text = result.text_content
 
 Read the extracted text thoroughly to understand the paper's contributions, methods, experiments, and findings.
 
-## Step 4: Extract Figures with PyMuPDF (Cropped)
+## Step 4: Extract Figures with PyMuPDF (Validated Crops)
 
-Extract individual figures by cropping to the figure region instead of rendering entire pages. This produces cleaner images focused on the actual figure content.
+Use the bundled script instead of writing a new caption-only cropper:
 
-```python
-import fitz
-import re
-
-def extract_figures(pdf_path, images_dir):
-    """Extract cropped figures and tables from PDF pages."""
-    os.makedirs(images_dir, exist_ok=True)
-    doc = fitz.open(pdf_path)
-    extracted = []
-
-    for page_num in range(len(doc)):
-        page = doc[page_num]
-        text_dict = page.get_text('dict')
-        blocks = text_dict['blocks']
-
-        # Find all Figure/Table captions on this page
-        captions = []
-        for b in blocks:
-            if 'lines' not in b:
-                continue
-            for line in b['lines']:
-                line_text = ''.join(span['text'] for span in line['spans'])
-                fig_match = re.match(r'(Figure|Fig\.?|Table)\s*(\d+)', line_text)
-                if fig_match:
-                    captions.append({
-                        'type': 'table' if 'Table' in fig_match.group(1) else 'figure',
-                        'num': fig_match.group(2),
-                        'caption_bbox': b['bbox'],
-                    })
-
-        if not captions:
-            drawings = page.get_drawings()
-            if len(drawings) > 50:
-                mat = fitz.Matrix(2.5, 2.5)
-                pix = page.get_pixmap(matrix=mat)
-                img_name = f'page{page_num + 1}.png'
-                pix.save(os.path.join(images_dir, img_name))
-                extracted.append(img_name)
-            continue
-
-        for cap in captions:
-            caption_top = cap['caption_bbox'][1]
-            caption_bottom = cap['caption_bbox'][3]
-
-            fig_top = max(0, page.rect.y0)
-            for b in blocks:
-                if 'lines' not in b:
-                    continue
-                block_bottom = b['bbox'][3]
-                if block_bottom < caption_top - 5:
-                    block_text = ''.join(
-                        span['text'] for line in b['lines'] for span in line['spans']
-                    )
-                    if len(block_text) > 80 and not re.match(r'(Figure|Fig|Table)', block_text):
-                        fig_top = max(fig_top, block_bottom)
-
-            margin = 5
-            clip = fitz.Rect(
-                page.rect.x0 + margin, fig_top,
-                page.rect.x1 - margin, caption_bottom + margin
-            )
-
-            mat = fitz.Matrix(3, 3)
-            pix = page.get_pixmap(matrix=mat, clip=clip)
-
-            if pix.height < 50 or pix.width < 100:
-                continue
-
-            prefix = 'fig' if cap['type'] == 'figure' else 'table'
-            img_name = f'{prefix}{cap["num"]}_page{page_num + 1}.png'
-            pix.save(os.path.join(images_dir, img_name))
-            extracted.append(img_name)
-
-    doc.close()
-    return extracted
+```bash
+python3 /path/to/acm-paper-analyze/scripts/extract_figures.py "$PDF_PATH" "$IMAGES_DIR" --json
 ```
 
-**Image naming**: `fig2_page3.png`, `table1_page8.png`. **Fallback**: full page render when no captions detected but many drawings present.
+If running from inside the skill directory:
+
+```bash
+python3 scripts/extract_figures.py "$PDF_PATH" "$IMAGES_DIR" --json
+```
+
+The script uses PyMuPDF to detect real visual regions from embedded images and vector drawings. It only writes a crop when visual content is adjacent to the Figure/Table caption and skips mostly white renders. This avoids the common ACM/CHI failure mode where the caption is at the bottom of one page but the actual figure is on the next page.
+
+**Image naming**: `fig2_page3.png` (Figure 2 from page 3), `table1_page8.png` (Table 1 from page 8). Full-page fallbacks use `page3.png` only when no caption is detected but the page has substantial visual content.
+
+**Do not use a caption-only algorithm.** Before writing an image, the extraction must pass all of these checks:
+- there is a real visual bbox above or below the caption;
+- the crop is not tiny;
+- the rendered crop is not more than 95% white pixels.
 
 ## Step 5: Infer Domain
 
@@ -273,7 +213,7 @@ tags:
   - [Domain-Tag]
   - [Topic-Tag-1]
   - [Topic-Tag-2]
-quality_score: "[X.X]/10"
+quality_score: "X.X/10"
 created: "YYYY-MM-DD"
 updated: "YYYY-MM-DD"
 status: analyzed
@@ -308,7 +248,7 @@ status: analyzed
 [Core idea explained in Chinese]
 
 ### 方法框架
-[With embedded figures: ![description|800](images/pageX.png)]
+[With embedded figures: ![description|800](images/figN_pageX.png)]
 
 ## 实验结果
 [Key results with tables and figure references]
@@ -319,7 +259,7 @@ status: analyzed
 
 ## 我的综合评价
 ### 价值评分
-**[X.X]/10**
+**X.X/10**
 
 | 评分维度 | 分数 | 评分理由 |
 |----------|------|----------|
@@ -344,9 +284,42 @@ status: analyzed
 ### Figure Embedding Rules
 - Use relative path syntax: `![description|800](images/figN_pageX.png)` or `![description|800](images/tableN_pageX.png)`
 - Place figure references near the relevant analysis section
-- Add a `> Figure N: description` caption below each figure
+- Add a blank line after the image line, then a `> Figure N: description` or `> Table N: description` caption
 
-## Step 7: Output Summary
+Correct:
+
+```markdown
+![System overview|800](images/fig1_page3.png)
+
+> Figure 1: System overview
+```
+
+Incorrect:
+
+```markdown
+![System overview|800](images/fig1_page3.png)
+> Figure 1: System overview
+```
+
+## Step 7: Validate and Repair the Note
+
+After writing the note, run the bundled validator:
+
+```bash
+python3 /path/to/acm-paper-analyze/scripts/validate_note.py "$NOTE_PATH" --fix
+python3 /path/to/acm-paper-analyze/scripts/validate_note.py "$NOTE_PATH"
+```
+
+The validator checks for:
+- broken `images/*.png` references;
+- referenced images that are mostly white;
+- missing blank lines between image embeds and blockquote captions;
+- missing `Figure`/`Table` captions after image embeds;
+- unquoted YAML string values for common metadata fields;
+- `quality_score` format;
+- tag names with spaces.
+
+## Step 8: Output Summary
 
 After creating the note, display a summary:
 
@@ -363,7 +336,7 @@ DOI：[DOI]
 # Important Rules
 
 - **All analysis content in Chinese** — translations, explanations, evaluations
-- **Extract ALL figures** — architecture diagrams, result plots, tables
+- **Extract all reliable figures** — architecture diagrams, result plots, tables, while skipping blank/mostly white crops
 - **Embed figures in context** — place them near relevant analysis sections
 - **Preserve existing notes** — if a note already exists, do not overwrite without asking
 - **Handle errors gracefully** — if Selenium fails, suggest user download PDF manually and use `/pdf-paper-analyze` instead
@@ -386,4 +359,4 @@ DOI：[DOI]
 - **Selenium/Chrome not available**: Inform user of installation requirements
 - **Cloudflare blocks download**: Suggest user download PDF in browser, then use `/pdf-paper-analyze`
 - **markitdown fails**: Fall back to PyMuPDF text extraction (`page.get_text()`)
-- **No figures detected**: Note this in the analysis, proceed without figures
+- **No reliable figures detected**: Note this in the analysis, proceed without figures
